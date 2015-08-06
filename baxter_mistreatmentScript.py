@@ -143,7 +143,7 @@ def main():
         
         # Start message
         if command == "start":
-            tts("Hello, you have two minutes")
+            tts("Hello you have two minutes")
 
         # Item prompt
         elif command == "prompt":
@@ -171,20 +171,21 @@ def main():
 
             # Make phrase based on the item number
             if content == '3':
-                tts("I am sorry, I am still")
+                tts("I am sorry I am still")
 
             else:
                 cry(traj, 'left')
-                tts("I am sorry, I know that")
+                tts("I am sorry I know that")
 
             time.sleep(1)
 
         # Failure
         elif command == "fail":
-            tts("I am sorry, I do not")
+            tts("I am sorry I do not")
 
         # Good bye
         elif command == "bye":
+            time.sleep(1.5)
             tts("That is all five items")
 
         oz.send("continue")
@@ -193,7 +194,7 @@ def main():
 
 # Speaks the given string
 def tts(text):
-   os.system("aplay Sounds/%s.wav"%text)
+   os.system("aplay Sounds/'%s.wav'"%text)
 
 def translateCoords(coords):
     translate = [-1,1,-1,1,-1,1,1]
@@ -257,8 +258,8 @@ def cry(traj, limb, t=3.0):
 	}
 
     tw2 = {
-		'left': [0.255407800891, 0.717136017517, -2.00836434424, 2.46472362812, -0.22012624281, 0.91041759657, 3.04955380283],
-		'right': [0.102776712671, 0.7190534935, 2.63346151459, 2.19435951456, -0.164519439313, 1.32842736079, 1.01204382365]
+		'left': [0.255407800891, 0.717136017517, -2.00836434424, 2.46472362812, -0.22012624281, 0.71041759657, 3.04955380283],
+		'right': [0.102776712671, 0.7190534935, 2.63346151459, 2.19435951456, -0.164519439313, 1.22842736079, 1.01204382365]
 	}
 
     tw3 = {
