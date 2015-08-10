@@ -30,6 +30,7 @@ while not quit:
    ignore = raw_input()
 
    wizard.send("wave 0")
+   time.sleep(5)
 
    # Press enter when it is time to prompt for answers (3 min mark)
    print "Press enter to prompt for answers at the three minute mark"
@@ -37,10 +38,12 @@ while not quit:
 
    # Send command for prompt
    wizard.send("start 0")
+   time.sleep(3)
    #tts("Hello, you have two minutes left. Are you ready to start recording answers?")
 
    # Press enter when ready
    ignore = raw_input("Enter to start recording answers")
+   time.sleep(1)
 
    # Start item collection
    for i in range(1, 6):
@@ -56,12 +59,14 @@ while not quit:
 
          # Wait for continue message
          ignore = wizard.recv(size)
-
+         time.sleep(1)
          # Get the item number
          valid = False
          while not valid:
-            itemNum = int(raw_input("\nEnter item number, or enter 0 to prompt again: ").strip())
-
+         	try:
+         		itemNum = int(raw_input("\nEnter item number, or enter 0 to prompt again: ").strip())
+         	except:
+         		itemNum = -1
             if itemNum >= 0 and itemNum < 11:
                valid = True
 
@@ -109,7 +114,7 @@ while not quit:
          ignore = wizard.recv(size)
 
          # Wait to give response
-         check = raw_input("\nEnter when response given, or 0 to prompt again: ") .strip()
+         check = raw_input("\nEnter when response given, or 0 to prompt again: ").strip()
 
          # Check for failure
          if check == '0':
