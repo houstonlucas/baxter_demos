@@ -54,6 +54,7 @@ while not quit:
       loop = True
       while loop:
          # Send command for item prompt
+         sleep(1)
          wizard.send("prompt " + str(i))
          #tts("What is your choice for item number " + str(i))
 
@@ -63,10 +64,10 @@ while not quit:
          # Get the item number
          valid = False
          while not valid:
-         	try:
-         		itemNum = int(raw_input("\nEnter item number, or enter 0 to prompt again: ").strip())
-         	except:
-         		itemNum = -1
+            try:
+                itemNum = int(raw_input("\nEnter item number, or enter 0 to prompt again: ").strip())
+            except:
+                itemNum = -1
             if itemNum >= 0 and itemNum < 11:
                valid = True
 
