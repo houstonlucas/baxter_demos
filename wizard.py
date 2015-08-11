@@ -54,7 +54,7 @@ while not quit:
       loop = True
       while loop:
          # Send command for item prompt
-         sleep(1)
+         time.sleep(1)
          wizard.send("prompt " + str(i))
          #tts("What is your choice for item number " + str(i))
 
