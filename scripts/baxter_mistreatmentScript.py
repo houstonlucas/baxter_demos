@@ -177,7 +177,6 @@ def main():
 
             else:
                 cry(traj, 'left')
-                tts("I am sorry I know that")
 
             time.sleep(1)
 
@@ -281,7 +280,9 @@ def cry(traj, limb, t=3.0):
     t+=dt
     traj.add_point(p2, t)
     traj.start()
-    traj.wait(t)
+    traj.wait(t/2)
+    tts("I am sorry I know that")
+    traj.wait(t/2)
     traj.clear(limb)
     moveArmToStart(traj, limb, t = 3.0)
 
