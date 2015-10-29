@@ -8,6 +8,7 @@ import sys
 import os
 import cv2
 import cv_bridge
+import numpy as np
 import time
 import copy
 
@@ -26,7 +27,6 @@ from trajectory_msgs.msg import (
 from sensor_msgs.msg import (
     Image,
 )
-
 
 ##### IKSOLVER ##########
 from baxter_core_msgs.srv import (
@@ -69,7 +69,6 @@ def main():
     elif mode == 'test':
         testMode()
 
-
 def testMode():
     print("Running in test mode.")
     print("Initializing node... ")
@@ -78,29 +77,30 @@ def testMode():
     rs = baxter_interface.RobotEnable(CHECK_VERSION)
     print("Enabling robot... ")
     rs.enable()
-    print("Running. Ctrl-c to quit")
+    print("Running. Ctrl-c to quit") 
     
     limb = 'left'
     otherLimb = 'right'
 
-
     btnHandler = ButtonHandler()
 
-    left = baxter_interface.Gripper('left', CHECK_VERSION)
-    right = baxter_interface.Gripper('right', CHECK_VERSION)
-    
     traj = Trajectory(limb)
     trajOther = Trajectory(otherLimb)
     rospy.on_shutdown(traj.stop)
     rospy.on_shutdown(trajOther.stop)
 
+    left = traj.gripper
+    right = trajOther.gripper
+
     left.calibrate()
     right.calibrate()
+
+    #frontSideCW(traj, trajOther)
+    #return
 
     moveArmsToStart(traj, trajOther)
     left.open()
     right.open()
-
     
     btnHandler.reset()
     while btnHandler.loop and not rospy.is_shutdown():
@@ -110,6 +110,7 @@ def testMode():
         time.sleep(0.1)
     btnHandler.reset()
     
+
     #ignore = raw_input("continue")
     print("Grabbing Cube")
 
@@ -117,79 +118,25 @@ def testMode():
     left.close()
     right.open()
 
+    readInCubeState(traj, trajOther)
+    moveToCubeHandlingPos(traj, trajOther, t = 2.0)
+    rightSideCW(traj, trajOther )
+    moveToCubeHandlingPos(traj, trajOther, t = 2.0 )
+    cubeGrab( traj, trajOther )
+    moveToCubeHandlingPos(traj, trajOther, t = 2.0 )
 
-    time.sleep(3.0)
-    current = [0.6, -0.1, 0.35]
-    new = [0.6, -0.05, 0.35]
+    holdOutCube( traj, trajOther )
+    #frontSideCW(traj, trajOther)
 
-    '''
-    print "starting motion"
-    moveLimb(trajOther, "+y+90", current, new)
-    trajOther.start()
-    trajOther.wait()
-    trajOther.clear()
-    print 'done'
-    '''
 
-    # MOVE ARMS TO CUBE HANDLING STATE
-    moveToCubeHandlingPos(traj, trajOther)
-
-    ic = image_capturer('right')
-    time.sleep(2.0)
-
-    neededMotionY = None
-
-    startPos = [0.6, -0.1, 0.35, "+y+90"]
-    currentPos = startPos[:3]
-
-    trajOther.add_point(startPos, 3.0)
-    trajOther.start()
-    trajOther.wait()
-    time.sleep(3.0)
-    trajOther.clear()
-
-    motionFactors = [-0.00025, -0.00035, -0.0004 ]
-
-    btnHandler.loop = True
-    while str(neededMotionY) != "Good" and not rospy.is_shutdown():
-        #TODO REMOVE print "entering Loop"
-        neededMotionY, neededMotionZ = seeCube(ic)
-        if neededMotionY != None:
-            if abs(neededMotionY) > 3.0:
-                factorIndex = max(int(abs(neededMotionY)/20), len(motionFactors)-1)
-                yOffset = motionFactors[factorIndex]*neededMotionY
-                zOffset = motionFactors[factorIndex]*neededMotionZ
-                neededOffset = [0,yOffset,zOffset]
-                #adds cooresponding elements
-                newPos = map(sum, zip(currentPos, neededOffset ))
-                moveLimb(trajOther,"+y+90", currentPos, newPos, it = 0.25, ft = 0.75, n = 30 )
-                trajOther.start()
-                trajOther.wait()
-                time.sleep(1.0)
-                trajOther.clear()
-                currentPos = newPos
-            elif abs(neededMotionY) <= 3.0 and abs(neededMotionZ) < 1.0:
-                neededMotionY = "Good"
-        time.sleep(0.1)
-    btnHandler.loop = True
+    #FAILS HORRIBLY on left
+    #cubeGrab(traj, trajOther)
     
-    # CLOSE GRIPPERS
-    right.close()
-    time.sleep(1.0)
-    left.open()
-
-
-    moveLimb(trajOther,"+y+90", currentPos, startPos[:3], it = 1.0, ft = 5.0)
-    trajOther.start()
-    trajOther.wait()
-    time.sleep(3.0)
-    trajOther.clear()
-
     btnHandler.reset()
     while btnHandler.loop and not rospy.is_shutdown():
         offset = btnHandler.wheelChange
         current = left.position()
-        left.command_position(current + offset)
+        left.command_position( current + offset )
         time.sleep(0.1)
     btnHandler.reset()
 
@@ -198,62 +145,9 @@ def testMode():
 
     print "exit"
 
-def CubeHandOff():
-    pass
-
-def seeCube(ic):
-    #Retrieve the image from baxters hand
-    img = ic.getImage()
-
-    neededY = None
-    neededZ = 0
-
-    if img == None:
-        print "Image Capture Failure"
-        sys.exit()
-
-    # BELOW SECTION FINDS CUBE
-    edges = cv2.Canny(img, 40,100)
-
-    ret, thresh = cv2.threshold(edges, 127,255,0)
-    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-    validCont = reduceToStickers(contours, [1000, 50000])
-    if len(validCont) > 0:
-
-        cv2.drawContours(img, validCont, -1, (0,0,255), 2)
-
-        pt1 = validCont[0][0]
-        pt2 = validCont[0][1]
-
-        stickerWidthFound = dist(pt1, pt2)
-        stickerWidthWanted = 88.5
-        neededY = stickerWidthFound - stickerWidthWanted
-
-        if abs(neededY) < 15.0:
-            centers = [getCenter(i) for i in validCont]
-            #xCenter = sum([ centers[i][0] for i in range(len(centers))])/len(centers)
-            zCenter = sum([ centers[i][1] for i in range(len(centers))])/len(centers)
-            #was 91
-            neededZ = (90.25 - zCenter)/3.0
-        print neededY, neededZ
-
-
-    cv2.drawContours(img, validCont, -1, (0,0,255), 2)
-    showImage(img, "/myImage")
-    showImage(cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR), "/myEdges")
-    showImage(img, '/robot/xdisplay')
-    return neededY, neededZ
-
-def showImage(img, topicName):
-    msg = cv_bridge.CvBridge().cv2_to_imgmsg(img, encoding="bgr8")
-    pub = rospy.Publisher(topicName, Image, latch=True, queue_size=10)
-    pub.publish(msg)
-
 def demoMode():
     print("Running in demo mode.")
     print("Initializing node... ")
-    #TODO CHANGE NAME OF NODE
     rospy.init_node("baxter_rubiks_demo")
     print("Getting robot state... ")
     rs = baxter_interface.RobotEnable(CHECK_VERSION)
@@ -264,18 +158,16 @@ def demoMode():
     limb = 'left'
     otherLimb = 'right'
 
-
     btnHandler = ButtonHandler()
-
-    left = baxter_interface.Gripper('left', CHECK_VERSION)
-    right = baxter_interface.Gripper('right', CHECK_VERSION)
-    
 
     traj = Trajectory(limb)
     trajOther = Trajectory(otherLimb)
     rospy.on_shutdown(traj.stop)
     rospy.on_shutdown(trajOther.stop)
 
+    left = traj.gripper
+    right = trajOther.gripper
+    
     left.calibrate()
     right.calibrate()
 
@@ -286,7 +178,6 @@ def demoMode():
         time.sleep(0.1)
     btnHandler.loop = True
     time.sleep(2.0)
-    #TODO REMOVE LOOP 
 
     moveArmsToStart(traj, trajOther)
     left.open()
@@ -326,6 +217,149 @@ def demoMode():
     
     left.open()
     right.open()
+
+def cubeGrab(cubeHolder, cubeGrabber):
+    time.sleep(3.0)
+    current = [0.6, -0.1, 0.35]
+    new = [0.6, -0.05, 0.35]
+    neededMotionY = None
+
+    holdingGripper = cubeHolder.gripper
+    grabbingGripper = cubeGrabber.gripper
+
+    # MOVE ARMS TO CUBE HANDLING STATE
+    moveToCubeHandlingPos(cubeGrabber, cubeHolder)
+
+    ic = image_capturer(cubeGrabber.limb)
+    time.sleep(2.0)
+
+    poseOrientation = "+y+90"
+
+
+    motionFactors = [-0.00025, -0.00035, -0.0004 ]
+    startPos = [0.6, -0.1, 0.35, poseOrientation]
+
+    if cubeGrabber.limb == "left":
+        #convert variables for a left handed grabbing
+        motionFactors = [-1*i for i in motionFactors]
+        loc = translateCoords(startPos[:3])
+        poseOrientation = mirrorOrientation(poseOrientation)
+        loc.append(orientation)
+        startPos = loc
+        current = translateCoords(current)
+        new = translateCoords(new)
+
+
+
+
+    currentPos = startPos[:3]
+
+    print startPos
+    cubeGrabber.add_point( startPos, 2.0 )
+    moveLimb( cubeGrabber, poseOrientation, currentPos, [0.6, -0.041, 0.35], 3.0, 6.0 );
+
+    cubeGrabber.start()
+    cubeGrabber.wait()
+    time.sleep(6.0)
+    cubeGrabber.clear()
+
+    '''
+    while str(neededMotionY) != "Good" and not rospy.is_shutdown():
+        #TODO REMOVE print "entering Loop"
+        neededMotionY, neededMotionZ = seeCube(ic)
+
+        if neededMotionY != None:
+            if abs(neededMotionY) > 3.0:
+                factorIndex = max(int(abs(neededMotionY)/20), len(motionFactors)-1)
+                yOffset = motionFactors[factorIndex]*neededMotionY
+                zOffset = motionFactors[factorIndex]*neededMotionZ
+                neededOffset = [0,yOffset,zOffset]
+                #adds cooresponding elements
+                newPos = map(sum, zip(currentPos, neededOffset ))
+                moveLimb(cubeGrabber, poseOrientation, currentPos, newPos, it = 0.20, ft = 0.60, n = 30 )
+                cubeGrabber.start()
+                cubeGrabber.wait()
+                time.sleep(0.65)
+                cubeGrabber.clear()
+                currentPos = newPos
+            elif abs(neededMotionY) <= 3.0 and abs(neededMotionZ) < 6.0:
+                neededMotionY = "Good"
+        time.sleep(0.1)
+    '''
+    #return
+    # CLOSE GRIPPERS
+    grabbingGripper.close()
+    time.sleep(1.0)
+    holdingGripper.open()
+
+    #Move arm back to handling position
+    cubeGrabber.add_point(startPos, 2.0)
+    cubeGrabber.start()
+    cubeGrabber.wait()
+    cubeGrabber.clear()
+    
+
+    # MOVE ARMS TO CUBE HANDLING STATE
+    moveToCubeHandlingPos(cubeGrabber, cubeHolder)
+
+def seeCube(ic, layers=1):
+    neededY = None
+    neededZ = 0
+
+    yAccuracy = 15.0
+
+    zStickerPlacement = 115.25
+    stickerWidthWanted = 88.5
+    if layers == 2:
+        #needs more adjustment maybe tweak which square it grabs
+        stickerWidthWanted = 70.0
+    
+    #Retrieve the image from baxters hand
+    img = ic.getImage()
+
+    if img == None:
+        print "Image Capture Failure"
+        sys.exit()
+
+    # BELOW SECTION FINDS CUBE
+    edges = cv2.Canny(img, 40,100)
+
+    ret, thresh = cv2.threshold(edges, 127,255,0)
+    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    validCont = reduceToStickers(contours, [1000, 50000])
+    if len(validCont) > 0:
+
+        cv2.drawContours(img, validCont, -1, (0,0,255), 2)
+
+        pt1 = validCont[0][0]
+        pt2 = validCont[0][1]
+
+        stickerWidthFound = dist(pt1, pt2)
+        neededY = stickerWidthFound - stickerWidthWanted
+
+
+        if abs(neededY) < yAccuracy:
+            centers = [getCenter(i) for i in validCont]
+            zCenter = sum([ centers[i][1] for i in range(len(centers))])/len(centers)
+            
+            #3 is just a scaling factor
+            #don't remove unless you want the robot to hit itself
+            # =)
+            neededZ = (zStickerPlacement - zCenter)/3.0
+        print neededY, neededZ
+
+
+    cv2.drawContours(img, validCont, -1, (0,0,255), 2)
+    showImage(img, "/myImage")
+    showImage(cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR), "/myEdges")
+    showImage(img, '/robot/xdisplay')
+    return neededY, neededZ
+
+def showImage(img, topicName):
+    msg = cv_bridge.CvBridge().cv2_to_imgmsg(img, encoding="bgr8")
+    pub = rospy.Publisher(topicName, Image, latch=True, queue_size=10)
+    pub.publish(msg)
 
 def getJointPos(limb, X,Y,Z, direction):
     
@@ -371,7 +405,7 @@ def getJointPos(limb, X,Y,Z, direction):
         # Format solution into Limb API-compatible dictionary
         limb_joints = dict(zip(resp.joints[0].name, resp.joints[0].position))
     else:
-        print("INVALID POSE - No Valid Joint Solution Found.")
+        print("INVALID POSE - No Valid Joint Solution Found For: %s, on %s arm"%(str(list((X,Y,Z,direction))), limb))
         
         
     jointPos = [limb_joints[i] for i in [limb+'_s0', limb+'_s1', limb+'_e0', limb+'_e1', limb+'_w0', limb+'_w1', limb+'_w2']]
@@ -412,20 +446,41 @@ def readInCubeState(traj, trajOther):
     trajOther.wait()
     traj.clear()
     trajOther.clear()
+
     time.sleep(2.0)
     ic.writeImage = True
     time.sleep(1.0)
+
+
+    trajOther.add_point(rightPos2, t/2)
+    trajOther.start()
+    trajOther.wait()
+    trajOther.clear()
+
+def holdOutCube( traj, trajOther ):
+    RightArmOut = [0.0218592262024, 0.179859247174, 1.57156331539, 0.971009837622, 0.941480707489, 0.955670029761, -0.0962572943298]
+
+    start = [0.6, -0.1, 0.35, '+y']
+    nextPos = [0.6, -0.25, 0.35, '+y']
+
+    moveLimb(trajOther, "+y", start[:3], nextPos[:3])
+
+    trajOther.add_point(RightArmOut, 8.0)
+    trajOther.start()
+    trajOther.wait()
+    trajOther.clear()
+
     
 def rotateWrist(traj, angle, t = 1.0):
     currentPos = copy.copy(traj._goal.trajectory.points[-1].positions)
     wristPos = currentPos[-1]
-    wristAngle = wristPos * 180.0 / 3.0
+    wristAngle = wristPos * 180.0 / np.pi
     newAngle = wristAngle + angle
     if newAngle > 180.0:
         newAngle -= 360.0
     elif newAngle < -180.0:
         newAngle += 360.0
-    newPos = newAngle * 3.0 / 180.0
+    newPos = newAngle * np.pi / 180.0
     currentPos[-1] = newPos
     traj.add_point(currentPos, traj.t + t)
 
@@ -437,58 +492,13 @@ def translateCoords(coords):
     newCoords = [translation[i]*coords[i] for i in range(len(coords))]
     return newCoords
 
-class Trajectory(object):
-    def __init__(self, limb):
-        ns = 'robot/limb/' + limb + '/'
-        self.limb = limb
-        self.t = 0.0
-        self._client = actionlib.SimpleActionClient(
-            ns + "follow_joint_trajectory",
-            FollowJointTrajectoryAction,
-        )
-        self._goal = FollowJointTrajectoryGoal()
-        server_up = self._client.wait_for_server(timeout=rospy.Duration(10.0))
-        if not server_up:
-            rospy.logerr("Timed out waiting for Joint Trajectory"
-                         " Action Server to connect. Start the action server"
-                         " before running example.")
-            rospy.signal_shutdown("Timed out waiting for Action Server")
-            sys.exit(1)
-        self.clear(limb)
-
-    def add_point(self, positions, time):
-        point = JointTrajectoryPoint()
-
-        if len(positions) == 4:
-            positions = getJointPos(self.limb, positions[0],positions[1],positions[2], positions[3])
-        point.positions = copy.copy(positions)
-        point.time_from_start = rospy.Duration(time)
-        self.t = max(time, self.t)
-        self._goal.trajectory.points.append(point)
-
-
-    def start(self):
-        self._goal.trajectory.header.stamp = rospy.Time.now()
-        self._client.send_goal(self._goal)
-
-    def stop(self):
-        self._client.cancel_goal()
-
-    def wait(self, timeout=None):
-        if timeout == None:
-            timeout = self.t
-        self._client.wait_for_result(timeout=rospy.Duration(timeout))
-
-    def result(self):
-        return self._client.get_result()
-
-    def clear(self, limb = None):
-        if limb == None:
-            limb = self.limb
-        self.t = 0.0
-        self._goal = FollowJointTrajectoryGoal()
-        self._goal.trajectory.joint_names = [limb + '_' + joint for joint in \
-            ['s0', 's1', 'e0', 'e1', 'w0', 'w1', 'w2']]
+def mirrorOrientation(orientation):
+    if "y" in orientation:
+        if orientation[0] == '+':
+            orientation = orientation.replace('+', '-', 1)
+        else:
+            orientation = orientation.replace('-', '+', 1)
+    return orientation
 
 def moveArmsToStart(traj, trajOther, t=3.0):
     
@@ -583,32 +593,115 @@ def cubeRotation(traj, trajOther, left, right, t=6.0):
     trajOther.start()
     trajOther.wait()
     trajOther.clear()
-    
-def rightSideCW(traj, trajOther, left, right, t=6.0):
+
+def leftSideCW(leftArm, rightArm, t=6.0):
     R0 = [0.6, -0.06, 0.35, '+y']
     R2 = [0.6, -0.1, 0.35, '+y+90']
     
-    trajOther.add_point(R0, t)
-    trajOther.start()
-    trajOther.wait(t)
-    trajOther.clear()
-    right.close()
+    LeftPos1 = [0.6, 0.06, 0.35, '+z']
+    LeftPos2 = [0.6, 0.1, 0.35, '-y+90']
+
+    # MOVE ARMS TO CUBE HANDLING STATE
+    moveToCubeHandlingPos(leftArm, rightArm)
+
+    leftArm.add_point(LeftPos1, t)
+    leftArm.start()
+    leftArm.wait(t)
+    leftArm.clear()
+    leftArm.gripper.close()
     
     
-    trajOther.add_point(R0, 1.0)
-    rotateWrist(trajOther, 90.0)
-    trajOther.start()
-    trajOther.wait(2.0)
-    trajOther.clear()
-    right.open()
-    print "starting motion"
-    moveLimb(trajOther, '+y+90', (0.6, -0.06, 0.35), (0.6, -0.1, 0.35))
+    leftArm.add_point(LeftPos1, 1.0)
+    rotateWrist(leftArm, 90.0)
+    leftArm.start()
+    leftArm.wait(2.0)
+    leftArm.clear()
+    leftArm.gripper.open()
+    moveLimb(leftArm, '-y+90', (0.6, 0.06, 0.35), (0.6, 0.1, 0.35))
     
-    #trajOther.add_point(R2, t)
-    trajOther.start()
-    trajOther.wait()
-    trajOther.clear()
-    print "done with motion"
+    leftArm.start()
+    leftArm.wait()
+    leftArm.clear()
+
+def frontSideCW(leftArm, rightArm, t = 5.0):
+    #ALMOST SETUP FOR A CUBE ROTATION
+    R0 = [0.6, -0.06, 0.35, '+y']
+    R2 = [0.6, -0.1, 0.35, '+y+90']
+
+    rightPos1 = [0.6, -0.2, 0.42, '-z']
+    rightPos2 = [0.6, -0.05, 0.42, '-z']
+    
+    LeftPos1 = [0.6, 0.05, 0.35, '-y']
+    LeftPos2 = [0.6, 0.1, 0.35, '-y+90']
+
+    # MOVE ARMS TO CUBE HANDLING STATE
+    moveToCubeHandlingPos(leftArm, rightArm)
+
+    moveLimb(rightArm, '+y', (0.6, -0.1, 0.35), (0.6, -0.3, 0.55), ft = t)
+    rightArm.add_point(rightPos1, t+4.0)
+    rightArm.add_point(rightPos2, t+6.0)
+    rightArm.start()
+    rightArm.wait()
+    time.sleep(11.0)
+    rightArm.clear()
+    rightArm.gripper.close()
+
+    leftArm.add_point(LeftPos1, t)
+    leftArm.start()
+    leftArm.wait()
+    time.sleep(5.0)
+    leftArm.clear()
+    leftArm.gripper.close()
+    
+    leftArm.add_point(LeftPos1, 1.0)
+    rotateWrist(leftArm, 90.0)
+    leftArm.start()
+    leftArm.wait(2.0)
+    leftArm.clear()
+    leftArm.gripper.open()
+    moveLimb(leftArm, '-y+90', (0.6, 0.06, 0.35), (0.6, 0.1, 0.35))
+    
+    leftArm.start()
+    leftArm.wait()
+    leftArm.clear()
+
+    rightArm.add_point(rightPos2, t+2.0)
+    rightArm.add_point(rightPos1, t+4.0)
+    rightArm.start()
+    rightArm.wait()
+    time.sleep( t+4.0 )
+    rightArm.clear()
+    rightArm.gripper.close()
+
+    moveToCubeHandlingPos(leftArm, rightArm)
+
+def rightSideCW(leftArm, rightArm, t=6.0):
+    R0 = [0.6, -0.06, 0.35, '+y']
+    R2 = [0.6, -0.1, 0.35, '+y+90']
+    
+    # MOVE ARMS TO CUBE HANDLING STATE
+    moveToCubeHandlingPos(leftArm, rightArm)
+
+    rightArm.add_point(R0, t)
+    rightArm.start()
+    rightArm.wait()
+    time.sleep(1.0)
+    rightArm.clear()
+    rightArm.gripper.close()
+    
+    rightArm.add_point( R0, 1.0 )
+    rotateWrist( rightArm, 90.0, t = 3.0 )
+    rightArm.start()
+    rightArm.wait()
+    time.sleep(3.0)
+    rightArm.clear()
+
+    rightArm.gripper.open()
+    moveLimb( rightArm, '+y+90', (0.6, -0.06, 0.35), (0.6, -0.1, 0.35) )
+    rightArm.start()
+    rightArm.wait()
+    time.sleep(2.0)
+    rightArm.clear()
 
 def moveToCubeHandlingPos(traj, trajOther, t=5.0):
 
@@ -641,6 +734,67 @@ def send_image(path):
     pub.publish(msg)
     # Sleep to allow for image to be published.
     rospy.sleep(1)
+
+class Trajectory(object):
+    def __init__(self, limb):
+        ns = 'robot/limb/' + limb + '/'
+        self.limb = limb
+        self.t = 0.0
+        self._client = actionlib.SimpleActionClient(
+            ns + "follow_joint_trajectory",
+            FollowJointTrajectoryAction,
+        )
+        self._goal = FollowJointTrajectoryGoal()
+        server_up = self._client.wait_for_server(timeout=rospy.Duration(10.0))
+        if not server_up:
+            rospy.logerr("Timed out waiting for Joint Trajectory"
+                         " Action Server to connect. Start the action server"
+                         " before running example.")
+            rospy.signal_shutdown("Timed out waiting for Action Server")
+            sys.exit(1)
+        self.clear(limb)
+        self.gripper = baxter_interface.Gripper(self.limb, CHECK_VERSION)
+
+    def add_point(self, positions, time):
+        point = JointTrajectoryPoint()
+
+        if len(positions) == 4:
+            positions = getJointPos(self.limb, positions[0],positions[1],positions[2], positions[3])
+        point.positions = copy.copy(positions)
+        point.time_from_start = rospy.Duration(time)
+        self.t = max(time, self.t)
+        self._goal.trajectory.points.append(point)
+
+
+    def start(self):
+        self._goal.trajectory.header.stamp = rospy.Time.now()
+        self._client.send_goal(self._goal)
+
+    def stop(self):
+        self._client.cancel_goal()
+
+    def wait(self, timeout = 45.0 ):
+        # if timeout == None:
+        #     timeout = self.t
+        #     print self.t
+        print "Timeout: %f"%(timeout)
+        success = self._client.wait_for_result(timeout=rospy.Duration(timeout))
+        if( not success ):
+            self._client.cancel_goal()
+        else:
+            state  = self._client.get_state()
+            print state
+
+    def result(self):
+        return self._client.get_result()
+
+    def clear(self, limb = None):
+        if limb == None:
+            limb = self.limb
+        self.t = 0.0
+        self._goal = FollowJointTrajectoryGoal()
+        self._goal.trajectory.joint_names = [limb + '_' + joint for joint in \
+            ['s0', 's1', 'e0', 'e1', 'w0', 'w1', 'w2']]
 
 class ButtonHandler:
     
@@ -687,7 +841,7 @@ class image_capturer:
             if self.writeImage == True:
                 #Write image to file
                 now = rospy.get_rostime()
-                cv2.imwrite("images/Cube_%i.jpg" % now.secs, cv_image)
+                #cv2.imwrite("images/Cube_%i.jpg" % now.secs, cv_image)
                 self.writeImage = False
             else:
                 self.data = cv_image
@@ -695,8 +849,13 @@ class image_capturer:
 
     def getImage(self):
         self.writeImage = "data"
-        while(self.data == None):
-            pass
+        startTime = time.time()
+        while(self.data == None and time.time() - startTime < 10.0):
+            time.sleep(0.1)
+
+        if self.data == None:
+            raise Exception("Time out while waiting for image.")
+
         img = copy.copy(self.data)
         self.data == None
         return img
